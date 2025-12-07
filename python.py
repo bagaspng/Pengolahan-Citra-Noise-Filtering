@@ -3,20 +3,27 @@ import numpy as np
 import os
 
 def mse(img1, img2):
+    """Mean Squared Error antara dua citra (harus ukuran dan channels sama)."""
+    if img1.shape != img2.shape:
+        raise ValueError("MSE: ukuran atau jumlah channel citra tidak sama.")
     return np.mean((img1.astype(np.float32) - img2.astype(np.float32)) ** 2)
 
 def ensure_dir(path):
     if not os.path.exists(path):
-        os.makedirs(path)
+        os.makedirs(path, exist_ok=True)
 
 def add_salt_pepper(img, prob):
     """
     Tambah noise salt & pepper ke citra grayscale atau color.
     prob = proporsi total pixel yang terkena noise (contoh: 0.02 = 2%)
+    Mengembalikan array dengan tipe sama seperti input (uint8).
     """
+    if prob <= 0:
+        return img.copy()
     noisy = img.copy()
     h, w = img.shape[:2]
 
+    # Random matrix
     rnd = np.random.rand(h, w)
     salt_mask = rnd < (prob / 2.0)
     pepper_mask = rnd > (1.0 - prob / 2.0)
@@ -25,16 +32,22 @@ def add_salt_pepper(img, prob):
         noisy[salt_mask] = 255
         noisy[pepper_mask] = 0
     else:
-        noisy[salt_mask, :] = 255
-        noisy[pep_mask := pepper_mask, :] = 0 if False else None
-        noisy[pepper_mask, :] = 0
+        # Untuk citra berwarna, set per channel
+        for ch in range(img.shape[2]):
+            channel = noisy[..., ch]
+            channel[salt_mask] = 255
+            channel[pepper_mask] = 0
+            noisy[..., ch] = channel
 
     return noisy
 
 def add_gaussian(img, sigma):
     """
     Tambah noise Gaussian ke citra grayscale atau color.
+    sigma: standar deviasi noise
     """
+    if sigma <= 0:
+        return img.copy()
     noise = np.random.normal(0, sigma, img.shape)
     noisy = img.astype(np.float32) + noise
     return np.clip(noisy, 0, 255).astype(np.uint8)
@@ -42,8 +55,12 @@ def add_gaussian(img, sigma):
 def apply_filter(img, size, mode):
     """
     Filter manual (min, max, mean, median) untuk grayscale & color.
-    Menggunakan padding 'edge' supaya semua pixel terproses (border tidak hitam).
+    Menggunakan padding 'edge' supaya border terproses.
+    size harus ganjil positif.
     """
+    if size < 1 or size % 2 == 0:
+        raise ValueError("Size filter harus bernilai ganjil dan >= 1")
+
     r = size // 2
     if img.ndim == 2:
         h, w = img.shape
@@ -114,6 +131,7 @@ def add_label_bar(img, text):
 
     bar = np.full((bar_h, w, 3), 255, dtype=np.uint8)
 
+    # posisi y supaya text center vertikal di bar
     y = (bar_h + text_h) // 2 - baseline
 
     cv2.putText(
@@ -140,16 +158,23 @@ def save_panel(original, noisy, filtered_dict, mode_desc, noise_desc,
     tiles.append(add_label_bar(filtered_dict["mean"], f"Mean {filter_size}x{filter_size}"))
     tiles.append(add_label_bar(filtered_dict["median"], f"Median {filter_size}x{filter_size}"))
 
+    # pastikan semua tiles memiliki ukuran tinggi yang sama sebelum hconcat
+    # namun add_label_bar menghasilkan bar dengan lebar image asli, sehingga harus aman
     row1 = cv2.hconcat(tiles[0:3])
     row2 = cv2.hconcat(tiles[3:6])
     panel = cv2.vconcat([row1, row2])
 
-    cv2.imwrite(out_path, panel)
+    ok = cv2.imwrite(out_path, panel)
+    if not ok:
+        print(f"[WARNING] Gagal menyimpan panel ke: {out_path}")
 
 def process_mode(img, name, label_mode, out_dir, mse_table,
                  sp_levels=[0.02, 0.08], gauss_levels=[10, 25],
                  filter_size=3):
-    base_fname = f"{out_dir}/{name}_{label_mode}.png"
+    """
+    img: original image untuk mode ini (gray = single channel, color = 3-channel)
+    """
+    base_fname = f"{out_dir}/{name}_{label_mode}_original.png"
     cv2.imwrite(base_fname, img)
 
     mode_desc = "Gray" if label_mode == "gray" else "Color"
@@ -161,12 +186,14 @@ def process_mode(img, name, label_mode, out_dir, mse_table,
         cv2.imwrite(f"{out_dir}/{name}_{label_mode}_{noise_tag}.png", noisy)
 
         filtered_dict = {}
-
         for mode in filter_modes:
             filtered = apply_filter(noisy, filter_size, mode)
             filtered_dict[mode] = filtered
 
-            error = mse(img, filtered)
+            try:
+                error = mse(img, filtered)
+            except ValueError:
+                error = float('nan')
             mse_table.append([label_mode, f"SP {p}", mode, error])
             print(f"MSE {name} | {label_mode} | SP {p} | {mode}: {error:.3f}")
 
@@ -181,12 +208,14 @@ def process_mode(img, name, label_mode, out_dir, mse_table,
         cv2.imwrite(f"{out_dir}/{name}_{label_mode}_{noise_tag}.png", noisy)
 
         filtered_dict = {}
-
         for mode in filter_modes:
             filtered = apply_filter(noisy, filter_size, mode)
             filtered_dict[mode] = filtered
 
-            error = mse(img, filtered)
+            try:
+                error = mse(img, filtered)
+            except ValueError:
+                error = float('nan')
             mse_table.append([label_mode, f"GAUSS {s}", mode, error])
             print(f"MSE {name} | {label_mode} | GAUSS {s} | {mode}: {error:.3f}")
 
@@ -218,7 +247,7 @@ def process_image(path, name):
 
     sp_levels = [0.02, 0.08]
     gauss_levels = [10, 25]
-    filter_size = 3
+    filter_size = 3  # harus ganjil
 
     process_mode(img_gray, name, "gray", out_dir, mse_table,
                  sp_levels=sp_levels, gauss_levels=gauss_levels,
@@ -229,15 +258,66 @@ def process_image(path, name):
                  filter_size=filter_size)
 
     mse_path = f"{out_dir}/{name}_mse.csv"
-    with open(mse_path, "w") as f:
-        f.write("Mode,Noise,Filter,MSE\n")
-        for mode_label, noise_label, filt, val in mse_table:
-            f.write(f"{mode_label},{noise_label},{filt},{val}\n")
+    try:
+        with open(mse_path, "w") as f:
+            f.write("Mode,Noise,Filter,MSE\n")
+            for mode_label, noise_label, filt, val in mse_table:
+                f.write(f"{mode_label},{noise_label},{filt},{val}\n")
+    except IOError as e:
+        print(f"[WARNING] Gagal menyimpan MSE CSV: {e}")
 
     print(f"\n✔ Semua hasil untuk {name} disimpan di folder: {out_dir}")
     print(f"✔ Tabel MSE: {mse_path}\n")
 
-process_image("Lake Bled, Slovenia.jpeg", "lake")
-process_image("potrait.jpeg", "potrait")
+def process_image_custom(path, name, sp_levels=None, gauss_levels=None):
+    print(f"\n=== Memproses {name} (custom) ===")
 
-print("\n=== SELESAI ===")
+    if not os.path.isfile(path):
+        print(f"[ERROR] File tidak ditemukan: {path}")
+        return
+
+    img = cv2.imread(path)
+    if img is None:
+        print(f"[ERROR] Gagal membaca file: {path}")
+        return
+
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    out_dir = f"results/{name}"
+    ensure_dir(out_dir)
+
+    cv2.imwrite(f"{out_dir}/{name}_original_color.png", img)
+
+    mse_table = []
+    filter_size = 3
+
+    if sp_levels is None:
+        sp_levels = [0.02, 0.08]
+    if gauss_levels is None:
+        gauss_levels = [10, 25]
+
+    process_mode(img_gray, name, "gray", out_dir, mse_table,
+                 sp_levels=sp_levels, gauss_levels=gauss_levels,
+                 filter_size=filter_size)
+
+    process_mode(img, name, "color", out_dir, mse_table,
+                 sp_levels=sp_levels, gauss_levels=gauss_levels,
+                 filter_size=filter_size)
+
+    mse_path = f"{out_dir}/{name}_mse.csv"
+    try:
+        with open(mse_path, "w") as f:
+            f.write("Mode,Noise,Filter,MSE\n")
+            for mode_label, noise_label, filt, val in mse_table:
+                f.write(f"{mode_label},{noise_label},{filt},{val}\n")
+    except IOError as e:
+        print(f"[WARNING] Gagal menyimpan MSE CSV: {e}")
+
+    print(f"\n✔ Semua hasil untuk {name} disimpan di folder: {out_dir}")
+    print(f"✔ Tabel MSE: {mse_path}\n")
+
+
+if __name__ == "__main__":
+    process_image("Lake Bled, Slovenia.jpeg", "lake")
+    process_image_custom("sun.jpeg", "potrait", sp_levels=[0.02, 0.15], gauss_levels=[10, 40])
+    print("\n=== SELESAI ===")
