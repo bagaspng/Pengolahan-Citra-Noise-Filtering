@@ -57,14 +57,6 @@ Program ini dirancang untuk penelitian, pembelajaran, dan evaluasi metode **nois
 | **Salt & Pepper** | `prob` (0-1) | P(x) = white if rand < prob/2<br>P(x) = black if rand > 1-prob/2 | Noise impulsif - piksel random jadi putih (255) atau hitam (0) | Dead pixels pada sensor kamera |
 | **Gaussian** | `sigma` (σ) | N(0, σ²) | Noise distribusi normal - menambahkan random value ke setiap piksel | Low-light photography noise |
 
-### 🌟 Yang Membedakan Program Ini
-
-- ✅ **Manual Implementation** - Konvolusi tanpa library filtering (educational purpose)
-- ✅ **Dual Mode Processing** - Support grayscale & color images
-- ✅ **Quantitative Evaluation** - MSE metrics untuk objektif comparison
-- ✅ **Visual Comparison** - Auto-generate comparison panels
-- ✅ **Flexible Parameters** - Customizable noise levels dan filter size
-- ✅ **Production Ready** - Error handling dan logging lengkap
 
 ---
 
